@@ -42,6 +42,16 @@ input[type=text]{font:inherit;font-size:14px;border-radius:7px;border:1px solid 
 .adm .row{margin-top:12px}
 .adm label{display:flex;gap:8px;align-items:center;color:var(--text);font-size:14px;margin-top:10px}
 .adm small{color:var(--muted)}
+#lobbyBtn{position:fixed;right:0;top:45%;z-index:40;writing-mode:vertical-rl;transform:rotate(180deg);padding:14px 8px;border-radius:0 10px 10px 0;background:var(--accent);color:#1b1d22;font-weight:700;border:none;box-shadow:0 4px 14px rgba(0,0,0,.4)}
+#lobbyBtn .cnt{display:inline-block;margin-top:6px;background:#1b1d22;color:var(--accent);border-radius:10px;padding:4px 2px;font-size:12px}
+#lobby{position:fixed;top:0;right:0;height:100%;width:min(340px,92vw);background:var(--panel);border-left:1px solid #3b404b;z-index:45;transform:translateX(105%);transition:transform .25s;display:flex;flex-direction:column;box-shadow:-10px 0 30px rgba(0,0,0,.4)}
+#lobby.open{transform:none}
+#lobby header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #3b404b}
+#lobby header b{color:var(--accent);font-size:16px}
+#lobbyList{flex:1;overflow:auto;padding:10px 14px}
+.lg{background:var(--panel2);border-radius:8px;padding:10px 12px;margin-bottom:8px;font-size:14px}
+.lg small{color:var(--muted);display:block;margin-top:3px}
+.lg button{margin-top:8px;width:100%}
 .sq.check{background-image:radial-gradient(circle,rgba(255,40,40,.95) 0%,rgba(230,30,30,.6) 45%,transparent 75%)}
 .sq.dot::after{content:"";position:absolute;width:30%;height:30%;border-radius:50%;background:rgba(20,20,20,.25)}
 .sq.ring::after{content:"";position:absolute;inset:5%;border-radius:50%;border:5px solid rgba(20,20,20,.25)}
@@ -133,6 +143,7 @@ b.k{color:var(--accent)}
       </div>
       <div id="onlineBox" style="display:none;margin-top:12px;padding:12px;border-radius:8px;background:var(--panel2);font-size:14px">
         <div class="row"><label>Моё имя <input type="text" id="myName" maxlength="20" placeholder="Например, Вова"></label>
+          <label>Доступ <select id="access"><option value="public">Публичная — видна всем</option><option value="private">Приватная — только по ссылке</option></select></label>
           <button class="primary" id="createRoom">🔗 Создать игру</button></div>
         <div id="roomInfo" style="margin-top:10px;display:none">
           <div>Отправь эту ссылку сопернику:</div>
@@ -210,6 +221,12 @@ b.k{color:var(--accent)}
   </div>
 </div>
 
+<button id="lobbyBtn" title="Созданные игры">🎮 Созданные игры <span class="cnt" id="lobbyCnt">0</span></button>
+<aside id="lobby" aria-label="Созданные игры">
+  <header><b>🎮 Созданные игры</b><button id="lobbyClose">✕</button></header>
+  <div id="lobbyList"></div>
+  <div style="padding:12px 14px;border-top:1px solid #3b404b"><button class="primary" id="lobbyCreate" style="width:100%">➕ Создать свою игру</button></div>
+</aside>
 <div class="adm-back" id="admBack"><div class="adm" id="adm"></div></div>
 <script>
 "use strict";
@@ -407,6 +424,7 @@ function newGame(fromRemote){
   human=document.getElementById("opp").value==="human";
   const wasOnline=online;
   online=document.getElementById("opp").value==="online";
+  if(wasOnline&&!online)unpublishGame();
   if(wasOnline&&!online&&net.ch&&sbClient){sbClient.removeChannel(net.ch);net={room:null,ch:null,role:null,oppName:"",lastSeen:0,ready:false};document.getElementById("roomInfo").style.display="none";}
   plyList=[];
   document.getElementById("onlineBox").style.display=online?"block":"none";
@@ -687,7 +705,9 @@ if(adminOn)initSF();
 
 // ======== ОНЛАЙН (Supabase Realtime) ========
 const SB_URL="https://hmkecihzribgeguzcwkt.supabase.co",SB_KEY="sb_publishable_9HipXlYi7d-mQbgXMVmr-w_v_n38Dkz";
-let online=false,sbClient=null,net={room:null,ch:null,role:null,oppName:"",lastSeen:0,ready:false},plyList=[];
+let online=false,sbClient=null,net={room:null,ch:null,role:null,oppName:"",lastSeen:0,ready:false,peerId:null},plyList=[];
+let myId;try{myId=sessionStorage.getItem("chessId");}catch(e){}
+if(!myId){myId=Math.random().toString(36).slice(2,12);try{sessionStorage.setItem("chessId",myId);}catch(e){}}
 function netConnected(){return net.ready&&Date.now()-net.lastSeen<15000;}
 function myNameV(){return (document.getElementById("myName").value.trim()||"Игрок");}
 function netStatus(t){document.getElementById("netStatus").innerHTML=t;}
@@ -704,9 +724,9 @@ function loadSB(cb){
   sc.onload=cb;sc.onerror=()=>netStatus("❌ Не удалось подключиться к серверу. Проверь интернет и обнови страницу.");
   document.head.appendChild(sc);
 }
-function send(o){if(net.ch&&net.ready)net.ch.send({type:"broadcast",event:"msg",payload:o});}
+function send(o){o.id=myId;if(net.ch&&net.ready)net.ch.send({type:"broadcast",event:"msg",payload:o});}
 function joinRoom(room,role){
-  net.room=room;net.role=role;net.ready=false;netUI();
+  net.room=room;net.role=role;net.ready=false;net.peerId=null;net.lastSeen=0;net.oppName="";netUI();
   loadSB(()=>{
     if(!sbClient)sbClient=window.supabase.createClient(SB_URL,SB_KEY);
     if(net.ch)sbClient.removeChannel(net.ch);
@@ -730,6 +750,13 @@ function replayMoves(list){
 function sendSync(){send({type:"sync",hostColor:player,tc:tcMin,moves:plyList,clk,name:myNameV(),ended});}
 function onNet(d){
   if(!d||!online)return;
+  if(d.type==="full"){if(d.to===myId){netStatus("❌ В эту игру уже кто-то зашёл. Выбери другую в «Созданных играх».");if(net.ch&&sbClient)sbClient.removeChannel(net.ch);net.ch=null;net.ready=false;}return;}
+  if(net.peerId&&d.id!==net.peerId){if(net.role==="host"&&d.type==="hello")send({type:"full",to:d.id});return;}
+  if(!net.peerId){
+    const opposite=(net.role==="host"&&d.role==="guest")||(net.role==="guest"&&(d.role==="host"||d.type==="sync"));
+    if(d.type==="hello"||d.type==="sync"){if(!opposite)return;net.peerId=d.id;if(net.role==="host")unpublishGame();}
+    else return;
+  }
   net.lastSeen=Date.now();
   if(d.type==="hello"){
     if(d.name)net.oppName=d.name;
@@ -768,6 +795,8 @@ document.getElementById("createRoom").onclick=()=>{
   joinRoom(room,"host");
   const link=location.origin+location.pathname+"?room="+room;
   document.getElementById("roomLink").value=link;document.getElementById("roomInfo").style.display="block";
+  if(document.getElementById("access").value==="public")publishGame({room,name:myNameV(),color:player,tc:tcMin,t:Date.now()});
+  else unpublishGame();
 };
 document.getElementById("copyLink").onclick=()=>{
   const inp=document.getElementById("roomLink"),b=document.getElementById("copyLink");
@@ -775,6 +804,57 @@ document.getElementById("copyLink").onclick=()=>{
 };
 try{const n=localStorage.getItem("myName");if(n)document.getElementById("myName").value=n;}catch(e){}
 document.getElementById("myName").oninput=e=>{try{localStorage.setItem("myName",e.target.value);}catch(err){}};
+
+// ======== ЛОББИ: созданные игры (Supabase Presence) ========
+let lobbyCh=null,lobbyReady=false,lobbyGames=[],myLobby=null;
+function initLobby(){
+  loadSB(()=>{
+    if(!sbClient)sbClient=window.supabase.createClient(SB_URL,SB_KEY);
+    if(lobbyCh)return;
+    lobbyCh=sbClient.channel("chess-lobby",{config:{presence:{key:myId}}});
+    lobbyCh.on("presence",{event:"sync"},()=>{
+      const st=lobbyCh.presenceState();const out=[];
+      for(const k in st)for(const p of st[k])if(p&&p.room&&p.room!==net.room)out.push(p);
+      out.sort((a,b)=>b.t-a.t);lobbyGames=out;renderLobby();
+    });
+    lobbyCh.subscribe(st=>{if(st==="SUBSCRIBED"){lobbyReady=true;if(myLobby)lobbyCh.track(myLobby);renderLobby();}});
+  });
+}
+function publishGame(e){myLobby=e;if(lobbyCh&&lobbyReady)lobbyCh.track(e);else initLobby();}
+function unpublishGame(){if(!myLobby)return;myLobby=null;if(lobbyCh&&lobbyReady)lobbyCh.untrack();}
+function ago(t){const m=Math.max(0,Math.round((Date.now()-t)/60000));return m<1?"только что":m+" мин назад";}
+function esc(x){return String(x).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+function renderLobby(){
+  document.getElementById("lobbyCnt").textContent=lobbyGames.length;
+  const L=document.getElementById("lobbyList");L.innerHTML="";
+  if(!lobbyReady){L.innerHTML='<div style="color:var(--muted);font-size:14px">⏳ Загружаю список…</div>';return;}
+  if(!lobbyGames.length){L.innerHTML='<div style="color:var(--muted);font-size:14px;line-height:1.5">Сейчас открытых игр нет.<br>Создай свою — она появится здесь у всех, кто зайдёт на сайт.</div>';return;}
+  for(const g of lobbyGames){
+    const d=document.createElement("div");d.className="lg";
+    d.innerHTML="<b>"+esc(g.name||"Игрок")+"</b> ищет соперника<small>Ты будешь играть "+(g.color==="w"?"чёрными":"белыми")+" · "+(g.tc?g.tc+" мин":"без времени")+" · "+ago(g.t)+"</small>";
+    const b=document.createElement("button");b.className="primary";b.textContent="▶ Подключиться";
+    b.onclick=()=>joinFromLobby(g.room);
+    d.appendChild(b);L.appendChild(d);
+  }
+}
+function joinFromLobby(room){
+  unpublishGame();
+  document.getElementById("opp").value="online";newGame();
+  joinRoom(room,"guest");
+  document.getElementById("roomInfo").style.display="none";
+  try{history.replaceState(null,"",location.pathname+"?room="+room);}catch(e){}
+  document.getElementById("lobby").classList.remove("open");
+}
+document.getElementById("lobbyBtn").onclick=()=>{document.getElementById("lobby").classList.toggle("open");renderLobby();};
+document.getElementById("lobbyClose").onclick=()=>document.getElementById("lobby").classList.remove("open");
+document.getElementById("lobbyCreate").onclick=()=>{
+  document.getElementById("lobby").classList.remove("open");
+  if(document.getElementById("opp").value!=="online"){document.getElementById("opp").value="online";newGame();}
+  document.getElementById("createRoom").style.display="";document.getElementById("access").value="public";
+  document.getElementById("onlineBox").scrollIntoView({behavior:"smooth",block:"center"});
+};
+setInterval(()=>{if(document.getElementById("lobby").classList.contains("open"))renderLobby();},30000);
+initLobby();
 
 // ======== ЧАСЫ ========
 function fmt(ms){ms=Math.max(0,ms);const t=Math.ceil(ms/1000);const m=Math.floor(t/60),sec=t%60;return (ms<10000?(ms/1000).toFixed(1):m+":"+String(sec).padStart(2,"0"));}
