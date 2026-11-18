@@ -35,6 +35,13 @@ h1{font-size:20px;margin:0 0 4px}
 .stats{display:flex;gap:14px;flex-wrap:wrap;font-size:14px;margin-bottom:8px}
 .stats b{color:var(--accent)}
 input[type=text]{font:inherit;font-size:14px;border-radius:7px;border:1px solid #3b404b;background:var(--panel2);color:var(--text);padding:7px 11px;width:130px}
+.adm-back{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:50}
+.adm{background:var(--panel);border:1px solid #3b404b;border-radius:12px;padding:18px;width:min(360px,92vw);box-shadow:0 20px 50px rgba(0,0,0,.5)}
+.adm h3{margin:0 0 12px;font-size:16px;color:var(--accent)}
+.adm input[type=password]{font:inherit;width:100%;padding:9px 11px;border-radius:7px;border:1px solid #3b404b;background:var(--panel2);color:var(--text)}
+.adm .row{margin-top:12px}
+.adm label{display:flex;gap:8px;align-items:center;color:var(--text);font-size:14px;margin-top:10px}
+.adm small{color:var(--muted)}
 .sq.check{background-image:radial-gradient(circle,rgba(255,40,40,.95) 0%,rgba(230,30,30,.6) 45%,transparent 75%)}
 .sq.dot::after{content:"";position:absolute;width:30%;height:30%;border-radius:50%;background:rgba(20,20,20,.25)}
 .sq.ring::after{content:"";position:absolute;inset:5%;border-radius:50%;border:5px solid rgba(20,20,20,.25)}
@@ -193,6 +200,7 @@ b.k{color:var(--accent)}
   </div>
 </div>
 
+<div class="adm-back" id="admBack"><div class="adm" id="adm"></div></div>
 <script>
 "use strict";
 // ======== ДВИЖОК ========
@@ -383,7 +391,7 @@ const coachEl=document.getElementById("coach");
 let human=false,tcMin=0,clk={w:0,b:0},lastTick=0,clockTimer=null,ended=null,recorded=false,state,history,moveLog,player,selected,targets,lastMove,hint,thinking,over,aiTimer,dangerSq=[],pending=null,badge=null;
 
 function newGame(){
-  clearTimeout(aiTimer);
+  clearTimeout(aiTimer);if(typeof cancelAuto==="function")cancelAuto();
   state=startState();history=[];moveLog=[];selected=-1;targets=[];lastMove=null;hint=null;thinking=false;over=false;
   player=document.getElementById("side").value;
   human=document.getElementById("opp").value==="human";
@@ -430,6 +438,7 @@ function render(){
     boardEl.appendChild(el);
   }
   renderMoves();renderCaps();renderStatus();
+  setTimeout(maybeAuto,0);
   document.getElementById("undoBtn").disabled=thinking||history.length===0;
   document.getElementById("resignBtn").disabled=over||moveLog.length===0;
   updateClocks();
@@ -563,6 +572,97 @@ function showGrade(r){
   el.style.display="flex";
   el.innerHTML='<span class="badge" style="background:'+g.c+'">'+g.s+'</span><div><b style="color:'+g.c+'">'+g.t+'</b> '+g.d+(r.bestTxt?' Лучше было: <b>'+r.bestTxt+'</b>.':'')+'</div>';
 }
+// ======== АДМИНКА (клавиша I) ========
+const ADMIN_HASH="1e408ff534ccd26db8bce77197b2463c9f14de2b45cdf6f999f3f01fc67b261a";
+let adminOn=false,auto={on:false,min:3,max:8},autoTimer=null,autoBusy=false;
+try{adminOn=localStorage.getItem("adm")==="1";const a=JSON.parse(localStorage.getItem("admAuto")||"null");if(a){auto.min=a.min;auto.max=a.max;}}catch(e){}
+async function sha256(t){const d=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(t));return [...new Uint8Array(d)].map(x=>x.toString(16).padStart(2,"0")).join("");}
+const admBack=document.getElementById("admBack"),admBox=document.getElementById("adm");
+function closeAdm(){admBack.style.display="none";}
+admBack.addEventListener("click",e=>{if(e.target===admBack)closeAdm();});
+function openAdm(){
+  admBack.style.display="flex";
+  if(!adminOn){
+    admBox.innerHTML='<h3>🔒 Вход</h3><input type="password" id="admCode" placeholder="Код доступа" autocomplete="off"><div class="row"><button class="primary" id="admGo">Войти</button> <button id="admX">Закрыть</button></div><div id="admErr" style="color:#ff7769;font-size:13px;margin-top:8px"></div>';
+    const inp=document.getElementById("admCode");inp.focus();
+    const go=async()=>{if(await sha256(inp.value)===ADMIN_HASH){adminOn=true;try{localStorage.setItem("adm","1");}catch(e){}openAdm();}else{document.getElementById("admErr").textContent="Неверный код";inp.value="";}};
+    document.getElementById("admGo").onclick=go;inp.onkeydown=e=>{if(e.key==="Enter")go();if(e.key==="Escape")closeAdm();};
+    document.getElementById("admX").onclick=closeAdm;
+    return;
+  }
+  admBox.innerHTML='<h3>⚙ Админка</h3>'+
+    '<label><input type="checkbox" id="admAuto"'+(auto.on?" checked":"")+'> Нейросеть играет за меня</label>'+
+    '<small>Ходит за твой цвет («Играю за»). Против бота и в игре вдвоём.</small>'+
+    '<label>Думает от <input type="number" id="admMin" min="1" max="60" value="'+auto.min+'" style="width:60px"> до <input type="number" id="admMax" min="1" max="120" value="'+auto.max+'" style="width:60px"> сек</label>'+
+    '<div style="margin-top:10px;font-size:13px">Движок: <b id="admEng">'+engineName()+'</b></div>'+
+    '<div class="row"><button class="primary" id="admOk">Готово</button> <button id="admOut">Выйти из админки</button></div>';
+  document.getElementById("admOk").onclick=()=>{
+    auto.on=document.getElementById("admAuto").checked;
+    let mn=Math.max(1,+document.getElementById("admMin").value||3),mx=Math.max(mn,+document.getElementById("admMax").value||8);
+    auto.min=mn;auto.max=mx;try{localStorage.setItem("admAuto",JSON.stringify({min:mn,max:mx}));}catch(e){}
+    if(auto.on)initSF();
+    cancelAuto();closeAdm();render();
+  };
+  document.getElementById("admOut").onclick=()=>{adminOn=false;auto.on=false;cancelAuto();try{localStorage.removeItem("adm");}catch(e){}closeAdm();render();};
+}
+document.addEventListener("keydown",e=>{
+  if(e.code!=="KeyI"||e.ctrlKey||e.altKey||e.metaKey)return;
+  const t=e.target;if(t&&(t.tagName==="INPUT"||t.tagName==="TEXTAREA"||t.tagName==="SELECT"))return;
+  e.preventDefault();admBack.style.display==="flex"?closeAdm():openAdm();
+});
+document.addEventListener("keydown",e=>{if(e.key==="Escape"&&admBack.style.display==="flex")closeAdm();});
+
+// --- Stockfish (сильнейший шахматный движок), с запасным вариантом ---
+let sf=null,sfReady=false,sfCb=null,sfFailed=false;
+function engineName(){return sfReady?"Stockfish 10 (сильнейший)":sfFailed?"встроенный (Stockfish не загрузился)":"Stockfish загружается…";}
+function initSF(){
+  if(sf||sfFailed)return;
+  try{
+    const src='importScripts("https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/10.0.2/stockfish.js");';
+    sf=new Worker(URL.createObjectURL(new Blob([src],{type:"application/javascript"})));
+    sf.onmessage=e=>{const l=String(e.data);
+      if(l==="uciok"||l==="readyok"){sfReady=true;const el=document.getElementById("admEng");if(el)el.textContent=engineName();}
+      if(l.startsWith("bestmove")&&sfCb){const cb=sfCb;sfCb=null;cb(l.split(" ")[1]);}};
+    sf.onerror=()=>{sfFailed=true;sf=null;sfReady=false;};
+    sf.postMessage("uci");sf.postMessage("setoption name Skill Level value 20");sf.postMessage("isready");
+    setTimeout(()=>{if(!sfReady){sfFailed=true;}},15000);
+  }catch(e){sfFailed=true;sf=null;}
+}
+function toFEN(s){
+  let f="";for(let r=0;r<8;r++){let e=0;for(let c=0;c<8;c++){const p=s.b[r*8+c];if(!p)e++;else{if(e){f+=e;e=0;}f+=p;}}if(e)f+=e;if(r<7)f+="/";}
+  const cr=(s.cr.K&&s.b[60]==="K"&&s.b[63]==="R"?"K":"")+(s.cr.Q&&s.b[60]==="K"&&s.b[56]==="R"?"Q":"")+(s.cr.k&&s.b[4]==="k"&&s.b[7]==="r"?"k":"")+(s.cr.q&&s.b[4]==="k"&&s.b[0]==="r"?"q":"");
+  return f+" "+s.turn+" "+(cr||"-")+" "+(s.ep>=0?sqName(s.ep):"-")+" "+s.half+" 1";
+}
+function sqIdx(n){return "abcdefgh".indexOf(n[0])+(8-+n[1])*8;}
+function bestMoveStrong(s,ms,cb){
+  const fallback=()=>cb(searchBest(s,3,0));
+  if(!sfReady||!sf){fallback();return;}
+  let done=false;
+  const timer=setTimeout(()=>{if(!done){done=true;sfCb=null;fallback();}},ms+4000);
+  sfCb=uci=>{if(done)return;done=true;clearTimeout(timer);
+    const f=sqIdx(uci.slice(0,2)),t=sqIdx(uci.slice(2,4));
+    const m=legal(s).find(x=>x.f===f&&x.t===t);cb(m||searchBest(s,3,0));};
+  sf.postMessage("position fen "+toFEN(s));sf.postMessage("go movetime "+ms);
+}
+function cancelAuto(){clearTimeout(autoTimer);autoTimer=null;autoBusy=false;}
+function maybeAuto(){
+  if(!auto.on||!adminOn||over||autoBusy||pending)return;
+  if(state.turn!==player)return;
+  if(!human&&thinking)return;
+  autoBusy=true;
+  const snap=state;
+  const delay=(auto.min+Math.random()*(auto.max-auto.min))*1000;
+  const t0=performance.now();
+  autoTimer=setTimeout(()=>{
+    if(state!==snap||over){autoBusy=false;return;}
+    bestMoveStrong(snap,Math.min(2500,Math.max(500,delay*0.4)),m=>{
+      const wait=Math.max(0,delay-(performance.now()-t0));
+      autoTimer=setTimeout(()=>{autoBusy=false;if(state!==snap||over||!m)return;selected=-1;targets=[];doMove(m);},wait);
+    });
+  },Math.min(delay*0.3,1500));
+}
+if(adminOn)initSF();
+
 // ======== ЧАСЫ ========
 function fmt(ms){ms=Math.max(0,ms);const t=Math.ceil(ms/1000);const m=Math.floor(t/60),sec=t%60;return (ms<10000?(ms/1000).toFixed(1):m+":"+String(sec).padStart(2,"0"));}
 function updateClocks(){
@@ -638,6 +738,7 @@ function showConfirm(m,hang,ns){
   document.getElementById("cfYes").onclick=()=>{const mm=pending;pending=null;box.style.display="none";doMove(mm);};
 }
 function doMove(m){
+  clearTimeout(autoTimer);autoBusy=false;
   const all=legal(state);
   let txt=notation(state,m,all);
   if(human||state.turn===player){
@@ -731,6 +832,7 @@ document.getElementById("undoBtn").onclick=()=>{
   if(thinking||!history.length)return;
   clearTimeout(aiTimer);
   if(ended)return;
+  cancelAuto();
   let h=history.pop();
   if(human){state=h.state;lastMove=h.lastMove;moveLog.length=h.logLen;over=false;selected=-1;targets=[];hint=null;coachEl.textContent="";badge=null;document.getElementById("grade").style.display="none";render();return;}
   while(h&&h.state.turn!==player&&history.length)h=history.pop();
