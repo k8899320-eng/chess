@@ -757,7 +757,7 @@ function onNet(d){
     document.getElementById("tc").value=String(d.tc);
     newGame(true);return;
   }
-  else if(d.type==="ping"){if(d.name)net.oppName=d.name;}
+  else if(d.type==="ping"){if(d.name)net.oppName=d.name;netUI();renderStatus();return;}
   render();
 }
 setInterval(()=>{if(online&&net.ready){send({type:"ping",name:myNameV()});netUI();}},4000);
