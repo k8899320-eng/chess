@@ -143,7 +143,7 @@ b.k{color:var(--accent)}
       </div>
       <div id="onlineBox" style="display:none;margin-top:12px;padding:12px;border-radius:8px;background:var(--panel2);font-size:14px">
         <div class="row"><label>Моё имя <input type="text" id="myName" maxlength="20" placeholder="Например, Вова"></label>
-          <label>Доступ <select id="access"><option value="public">Публичная — видна всем</option><option value="private">Приватная — только по ссылке</option></select></label>
+          <label id="accessWrap">Доступ <select id="access"><option value="public">Публичная — видна всем</option><option value="private">Приватная — только по ссылке</option></select></label>
           <button class="primary" id="createRoom">🔗 Создать игру</button></div>
         <div id="roomInfo" style="margin-top:10px;display:none">
           <div>Отправь эту ссылку сопернику:</div>
@@ -716,7 +716,7 @@ function netUI(){
   if(!net.room){netStatus("Создай игру и отправь ссылку другу — он откроет её на телефоне или компьютере.");return;}
   if(!net.ready){netStatus("⏳ Подключаюсь к серверу…");return;}
   if(netConnected())netStatus("🟢 Соперник в игре: <b>"+net.oppName.replace(/</g,"&lt;")+"</b>. Ты играешь "+(player==="w"?"белыми":"чёрными")+".");
-  else netStatus(net.lastSeen?"🔴 Соперник отключился. Ждём, пока вернётся…":"⏳ Ждём соперника… Отправь ему ссылку.");
+  else netStatus(net.lastSeen?"🔴 Соперник отключился. Ждём, пока вернётся…":(net.role==="guest"?"⏳ Подключаюсь к игре…":"⏳ Ждём соперника… Отправь ему ссылку."));
 }
 function loadSB(cb){
   if(window.supabase){cb();return;}
@@ -837,11 +837,11 @@ function renderLobby(){
     d.appendChild(b);L.appendChild(d);
   }
 }
+function guestUI(on){document.getElementById("createRoom").style.display=on?"none":"";document.getElementById("accessWrap").style.display=on?"none":"";if(on)document.getElementById("roomInfo").style.display="none";}
 function joinFromLobby(room){
   unpublishGame();
   document.getElementById("opp").value="online";newGame();
-  joinRoom(room,"guest");
-  document.getElementById("roomInfo").style.display="none";
+  joinRoom(room,"guest");guestUI(true);
   try{history.replaceState(null,"",location.pathname+"?room="+room);}catch(e){}
   document.getElementById("lobby").classList.remove("open");
 }
@@ -850,7 +850,7 @@ document.getElementById("lobbyClose").onclick=()=>document.getElementById("lobby
 document.getElementById("lobbyCreate").onclick=()=>{
   document.getElementById("lobby").classList.remove("open");
   if(document.getElementById("opp").value!=="online"){document.getElementById("opp").value="online";newGame();}
-  document.getElementById("createRoom").style.display="";document.getElementById("access").value="public";
+  guestUI(false);document.getElementById("access").value="public";
   document.getElementById("onlineBox").scrollIntoView({behavior:"smooth",block:"center"});
 };
 setInterval(()=>{if(document.getElementById("lobby").classList.contains("open"))renderLobby();},30000);
@@ -1069,7 +1069,7 @@ document.getElementById("copyBtn").onclick=()=>{
 newGame();
 (function(){const r=new URLSearchParams(location.search).get("room");
   if(r&&/^[a-z0-9]{4,12}$/.test(r)){document.getElementById("opp").value="online";newGame();joinRoom(r,"guest");
-    document.getElementById("createRoom").style.display="none";}})();
+    guestUI(true);}})();
 </script>
 </body>
 </html>
