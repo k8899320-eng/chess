@@ -425,6 +425,7 @@ function newGame(fromRemote){
   const wasOnline=online;
   online=document.getElementById("opp").value==="online";
   if(wasOnline&&!online)unpublishGame();
+  if(online&&!wasOnline&&typeof guestUI==="function")guestUI(false);
   if(wasOnline&&!online&&net.ch&&sbClient){sbClient.removeChannel(net.ch);net={room:null,ch:null,role:null,oppName:"",lastSeen:0,ready:false};document.getElementById("roomInfo").style.display="none";}
   plyList=[];
   document.getElementById("onlineBox").style.display=online?"block":"none";
