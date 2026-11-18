@@ -97,6 +97,7 @@ b.k{color:var(--accent)}
           <select id="opp">
             <option value="ai">Компьютер</option>
             <option value="human">Человек (вдвоём на одном устройстве)</option>
+            <option value="online">Друг по интернету (по ссылке)</option>
           </select>
         </label>
         <label id="lvlWrap">Уровень
@@ -129,6 +130,15 @@ b.k{color:var(--accent)}
         <button id="undoBtn">↶ Отменить ход</button>
         <button id="hintBtn">💡 Подсказка</button>
         <button id="resignBtn">🏳 Сдаться</button>
+      </div>
+      <div id="onlineBox" style="display:none;margin-top:12px;padding:12px;border-radius:8px;background:var(--panel2);font-size:14px">
+        <div class="row"><label>Моё имя <input type="text" id="myName" maxlength="20" placeholder="Например, Вова"></label>
+          <button class="primary" id="createRoom">🔗 Создать игру</button></div>
+        <div id="roomInfo" style="margin-top:10px;display:none">
+          <div>Отправь эту ссылку сопернику:</div>
+          <div class="row" style="margin-top:6px"><input type="text" id="roomLink" readonly style="width:100%;flex:1"><button id="copyLink">📋 Копировать</button></div>
+        </div>
+        <div id="netStatus" style="margin-top:10px;color:var(--muted)">Создай игру и отправь ссылку другу — он откроет её на телефоне или компьютере.</div>
       </div>
       <label id="flipWrap" style="display:none;gap:8px;align-items:center;margin-top:12px;font-size:14px;color:var(--text)"><input type="checkbox" id="autoflip" checked> Поворачивать доску к тому, кто ходит</label>
       <label style="display:flex;gap:8px;align-items:center;margin-top:12px;font-size:14px;color:var(--text)"><input type="checkbox" id="train" checked> Режим тренировки: предупреждать, если подставляю фигуру</label>
@@ -390,23 +400,29 @@ const statusEl=document.getElementById("status");
 const coachEl=document.getElementById("coach");
 let human=false,tcMin=0,clk={w:0,b:0},lastTick=0,clockTimer=null,ended=null,recorded=false,state,history,moveLog,player,selected,targets,lastMove,hint,thinking,over,aiTimer,dangerSq=[],pending=null,badge=null;
 
-function newGame(){
+function newGame(fromRemote){
   clearTimeout(aiTimer);if(typeof cancelAuto==="function")cancelAuto();
   state=startState();history=[];moveLog=[];selected=-1;targets=[];lastMove=null;hint=null;thinking=false;over=false;
   player=document.getElementById("side").value;
   human=document.getElementById("opp").value==="human";
+  const wasOnline=online;
+  online=document.getElementById("opp").value==="online";
+  if(wasOnline&&!online&&net.ch&&sbClient){sbClient.removeChannel(net.ch);net={room:null,ch:null,role:null,oppName:"",lastSeen:0,ready:false};document.getElementById("roomInfo").style.display="none";}
+  plyList=[];
+  document.getElementById("onlineBox").style.display=online?"block":"none";
   tcMin=+document.getElementById("tc").value;
   clk={w:tcMin*60000,b:tcMin*60000};lastTick=0;ended=null;recorded=false;
   document.getElementById("nameWrap").style.display=human?"":"none";
   document.getElementById("clockTop").style.display=tcMin?"":"none";
   document.getElementById("clockBot").style.display=tcMin?"":"none";
-  document.getElementById("lvlWrap").style.display=human?"none":"";
+  document.getElementById("lvlWrap").style.display=human||online?"none":"";
 
   document.getElementById("flipWrap").style.display=human?"flex":"none";
   pending=null;document.getElementById("confirm").style.display="none";
   badge=null;document.getElementById("grade").style.display="none";
   coachEl.textContent="";
   render();
+  if(online){if(!fromRemote&&net.ready)send({type:"newgame",color:player,tc:tcMin});netUI();return;}
   if(!human&&state.turn!==player)scheduleAI();
 }
 
@@ -439,7 +455,7 @@ function render(){
   }
   renderMoves();renderCaps();renderStatus();
   setTimeout(maybeAuto,0);
-  document.getElementById("undoBtn").disabled=thinking||history.length===0;
+  document.getElementById("undoBtn").disabled=online||thinking||history.length===0;
   document.getElementById("resignBtn").disabled=over||moveLog.length===0;
   updateClocks();
   document.getElementById("hintBtn").disabled=thinking||over||state.turn!==mine();
@@ -481,7 +497,7 @@ function renderStatus(){
     const iWon=ended.winner&&ended.winner===player;
     if(!ended.winner)statusEl.textContent="Ничья.";
     else if(human)statusEl.textContent=(ended.reason==="время"?"Время вышло — ":"Сдача — ")+"победили "+sideName(ended.winner)+" 🎉";
-    else statusEl.textContent=ended.reason==="время"?(iWon?"У компьютера кончилось время — ты победил 🎉":"Время вышло — ты проиграл."):(iWon?"Компьютер сдался 🎉":"Ты сдался.");
+    else {const who=online?(net.oppName||"Соперник"):"Компьютер";statusEl.textContent=ended.reason==="время"?(iWon?"У соперника кончилось время — ты победил 🎉":"Время вышло — ты проиграл."):(iWon?who+" сдался 🎉":"Ты сдался.");}
     statusEl.classList.add(human||iWon?"win":"lose");
     recordGame(ended.winner,ended.reason);
     return;
@@ -492,7 +508,7 @@ function renderStatus(){
     if(inCheck(state))recordGame(state.turn==="w"?"b":"w","мат");else recordGame(null,"пат");
     if(inCheck(state)){
       if(human){statusEl.textContent="Мат! Победили "+(state.turn==="w"?"чёрные":"белые")+" 🎉";statusEl.classList.add("win");}
-      else if(state.turn===player){statusEl.textContent="Мат. Компьютер победил — попробуй ещё раз!";statusEl.classList.add("lose");}
+      else if(state.turn===player){statusEl.textContent=online?"Мат. Победил "+(net.oppName||"соперник")+".":"Мат. Компьютер победил — попробуй ещё раз!";statusEl.classList.add("lose");}
       else{statusEl.textContent="Мат! Ты победил 🎉";statusEl.classList.add("win");}
     }else statusEl.textContent="Пат — ничья (у того, кто ходит, нет ходов, но и шаха нет).";
     return;
@@ -501,11 +517,13 @@ function renderStatus(){
   if(thinking){statusEl.innerHTML='<span class="thinking"></span> Компьютер думает…';return;}
   const chk=inCheck(state);
   if(human){statusEl.textContent=(state.turn==="w"?"Ход белых":"Ход чёрных")+(chk?" — шах! Защити короля.":"");return;}
-  statusEl.textContent=state.turn===player?(chk?"Тебе шах! Защити короля.":"Твой ход"):"Ход компьютера";
+  if(online&&!netConnected()){statusEl.textContent=net.room?"Ждём соперника…":"Создай игру и отправь ссылку";return;}
+  statusEl.textContent=state.turn===player?(chk?"Тебе шах! Защити короля.":"Твой ход"):(online?"Ход соперника ("+(net.oppName||"друг")+")":"Ход компьютера");
 }
 
 function onClick(i){
   if(over||thinking||state.turn!==mine())return;
+  if(online&&!netConnected()){netUI();return;}
   const tm=targets.find(m=>m.t===i);
   if(selected>=0&&tm){
     if(trainOn()){
@@ -651,6 +669,7 @@ function cancelAuto(){clearTimeout(autoTimer);autoTimer=null;autoBusy=false;}
 function maybeAuto(){
   if(!auto.on||!adminOn||over||autoBusy||pending)return;
   if(state.turn!==player)return;
+  if(online&&!netConnected())return;
   if(!human&&thinking)return;
   autoBusy=true;
   const snap=state;
@@ -665,6 +684,97 @@ function maybeAuto(){
   },Math.min(delay*0.3,1500));
 }
 if(adminOn)initSF();
+
+// ======== ОНЛАЙН (Supabase Realtime) ========
+const SB_URL="https://hmkecihzribgeguzcwkt.supabase.co",SB_KEY="sb_publishable_9HipXlYi7d-mQbgXMVmr-w_v_n38Dkz";
+let online=false,sbClient=null,net={room:null,ch:null,role:null,oppName:"",lastSeen:0,ready:false},plyList=[];
+function netConnected(){return net.ready&&Date.now()-net.lastSeen<15000;}
+function myNameV(){return (document.getElementById("myName").value.trim()||"Игрок");}
+function netStatus(t){document.getElementById("netStatus").innerHTML=t;}
+function netUI(){
+  if(!online)return;
+  if(!net.room){netStatus("Создай игру и отправь ссылку другу — он откроет её на телефоне или компьютере.");return;}
+  if(!net.ready){netStatus("⏳ Подключаюсь к серверу…");return;}
+  if(netConnected())netStatus("🟢 Соперник в игре: <b>"+net.oppName.replace(/</g,"&lt;")+"</b>. Ты играешь "+(player==="w"?"белыми":"чёрными")+".");
+  else netStatus(net.lastSeen?"🔴 Соперник отключился. Ждём, пока вернётся…":"⏳ Ждём соперника… Отправь ему ссылку.");
+}
+function loadSB(cb){
+  if(window.supabase){cb();return;}
+  const sc=document.createElement("script");sc.src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js";
+  sc.onload=cb;sc.onerror=()=>netStatus("❌ Не удалось подключиться к серверу. Проверь интернет и обнови страницу.");
+  document.head.appendChild(sc);
+}
+function send(o){if(net.ch&&net.ready)net.ch.send({type:"broadcast",event:"msg",payload:o});}
+function joinRoom(room,role){
+  net.room=room;net.role=role;net.ready=false;netUI();
+  loadSB(()=>{
+    if(!sbClient)sbClient=window.supabase.createClient(SB_URL,SB_KEY);
+    if(net.ch)sbClient.removeChannel(net.ch);
+    const ch=sbClient.channel("chess-"+room,{config:{broadcast:{self:false}}});
+    ch.on("broadcast",{event:"msg"},({payload})=>onNet(payload));
+    net.ch=ch;
+    ch.subscribe(st=>{
+      if(st==="SUBSCRIBED"){net.ready=true;send({type:"hello",name:myNameV(),role});netUI();}
+      else if(st==="CHANNEL_ERROR"||st==="TIMED_OUT"){net.ready=false;netStatus("❌ Ошибка связи с сервером. Обнови страницу.");}
+    });
+  });
+}
+function replayMoves(list){
+  state=startState();history=[];moveLog=[];plyList=[];lastMove=null;badge=null;
+  for(const [f,t] of list){
+    const all=legal(state);const m=all.find(x=>x.f===f&&x.t===t);if(!m)break;
+    history.push({state,lastMove,logLen:moveLog.length});
+    moveLog.push(notation(state,m,all));state=make(state,m);lastMove={f,t};plyList.push([f,t]);
+  }
+}
+function sendSync(){send({type:"sync",hostColor:player,tc:tcMin,moves:plyList,clk,name:myNameV(),ended});}
+function onNet(d){
+  if(!d||!online)return;
+  net.lastSeen=Date.now();
+  if(d.type==="hello"){
+    if(d.name)net.oppName=d.name;
+    if(net.role==="host"&&d.role==="guest")sendSync();
+    else if(net.role==="guest"&&d.role==="host")send({type:"hello",name:myNameV(),role:"guest"});
+  }
+  else if(d.type==="sync"&&net.role==="guest"){
+    if(d.name)net.oppName=d.name;
+    player=d.hostColor==="w"?"b":"w";document.getElementById("side").value=player;
+    tcMin=d.tc;document.getElementById("tc").value=String(d.tc);
+    document.getElementById("clockTop").style.display=tcMin?"":"none";document.getElementById("clockBot").style.display=tcMin?"":"none";
+    replayMoves(d.moves||[]);clk=d.clk||{w:tcMin*60000,b:tcMin*60000};lastTick=0;
+    ended=d.ended||null;recorded=!!ended;over=false;selected=-1;targets=[];
+    document.getElementById("grade").style.display="none";
+  }
+  else if(d.type==="move"){
+    if(d.ply!==plyList.length||state.turn===player)return;
+    const all=legal(state);const m=all.find(x=>x.f===d.f&&x.t===d.t);if(!m)return;
+    if(d.clk)clk=d.clk;lastTick=0;
+    doMove(m,{remote:true});return;
+  }
+  else if(d.type==="resign"){ended={winner:d.color==="w"?"b":"w",reason:"сдача"};}
+  else if(d.type==="newgame"){
+    document.getElementById("side").value=d.color==="w"?"b":"w";
+    document.getElementById("tc").value=String(d.tc);
+    newGame(true);return;
+  }
+  else if(d.type==="ping"){if(d.name)net.oppName=d.name;}
+  render();
+}
+setInterval(()=>{if(online&&net.ready){send({type:"ping",name:myNameV()});netUI();}},4000);
+document.getElementById("createRoom").onclick=()=>{
+  const room=Math.random().toString(36).slice(2,8);
+  net.oppName="";net.lastSeen=0;
+  newGame();
+  joinRoom(room,"host");
+  const link=location.origin+location.pathname+"?room="+room;
+  document.getElementById("roomLink").value=link;document.getElementById("roomInfo").style.display="block";
+};
+document.getElementById("copyLink").onclick=()=>{
+  const inp=document.getElementById("roomLink"),b=document.getElementById("copyLink");
+  try{navigator.clipboard.writeText(inp.value).then(()=>{b.textContent="✓ Скопировано";setTimeout(()=>b.textContent="📋 Копировать",1500);},()=>{inp.select();});}catch(e){inp.select();}
+};
+try{const n=localStorage.getItem("myName");if(n)document.getElementById("myName").value=n;}catch(e){}
+document.getElementById("myName").oninput=e=>{try{localStorage.setItem("myName",e.target.value);}catch(err){}};
 
 // ======== ЧАСЫ ========
 function fmt(ms){ms=Math.max(0,ms);const t=Math.ceil(ms/1000);const m=Math.floor(t/60),sec=t%60;return (ms<10000?(ms/1000).toFixed(1):m+":"+String(sec).padStart(2,"0"));}
@@ -697,10 +807,10 @@ function recordGame(winner,reason){
   if(recorded||moveLog.length<2)return;
   recorded=true;
   const name=(document.getElementById("oppName").value.trim()||"Друг");
-  const opp=human?name:"Бот («"+document.getElementById("level").selectedOptions[0].text+"»)";
+  const opp=online?(net.oppName||"Друг")+" (онлайн)":human?name:"Бот («"+document.getElementById("level").selectedOptions[0].text+"»)";
   const res=!winner?"draw":(winner===player?"win":"loss");
   const h=loadHist();
-  h.unshift({d:new Date().toISOString(),opp,human,color:player,res,reason,tc:tcMin,moves:Math.ceil(moveLog.length/2),text:movesText()});
+  h.unshift({d:new Date().toISOString(),opp,human:human||online,color:player,res,reason,tc:tcMin,moves:Math.ceil(moveLog.length/2),text:movesText()});
   saveHist(h.slice(0,200));
   renderHist();
 }
@@ -740,11 +850,14 @@ function showConfirm(m,hang,ns){
   document.getElementById("cfNo").onclick=()=>{pending=null;box.style.display="none";selected=-1;targets=[];render();};
   document.getElementById("cfYes").onclick=()=>{const mm=pending;pending=null;box.style.display="none";doMove(mm);};
 }
-function doMove(m){
+function doMove(m,opts){
+  opts=opts||{};
   clearTimeout(autoTimer);autoBusy=false;
   const all=legal(state);
   let txt=notation(state,m,all);
-  if(human||state.turn===player){
+  if(online&&!opts.remote){send({type:"move",ply:plyList.length,f:m.f,t:m.t,clk});}
+  plyList.push([m.f,m.t]);
+  if(!opts.remote&&(human||state.turn===player)){
     const r=gradeMove(state,m);
     const show=["brilliant","great","best","mate"].includes(r.g);
     badge=show?{sq:m.t,g:r.g}:null;
@@ -757,7 +870,7 @@ function doMove(m){
   state=make(state,m);
   lastMove={f:m.f,t:m.t};selected=-1;targets=[];hint=null;
   render();
-  if(!human&&!over&&state.turn!==player){coachTip(captured);scheduleAI();}
+  if(!human&&!online&&!over&&state.turn!==player){coachTip(captured);scheduleAI();}
 }
 
 const PNAME={q:"ферзь",r:"ладья",b:"слон",n:"конь",p:"пешка"};
@@ -803,6 +916,7 @@ function coachTip(captured){
 }
 
 function scheduleAI(){
+  if(online)return;
   thinking=true;render();
   aiTimer=setTimeout(()=>{
     const lvl=+document.getElementById("level").value;
@@ -825,6 +939,7 @@ document.getElementById("resignBtn").onclick=()=>{
   b.dataset.armed="";b.textContent="🏳 Сдаться";
   clearTimeout(aiTimer);thinking=false;
   const loser=human?state.turn:player;
+  if(online)send({type:"resign",color:player});
   ended={winner:loser==="w"?"b":"w",reason:"сдача"};render();
 };
 try{const n=localStorage.getItem("oppName");if(n)document.getElementById("oppName").value=n;}catch(e){}
@@ -832,6 +947,7 @@ document.getElementById("oppName").oninput=e=>{try{localStorage.setItem("oppName
 renderHist();
 document.getElementById("autoflip").onchange=()=>render();
 document.getElementById("undoBtn").onclick=()=>{
+  if(online)return;
   if(thinking||!history.length)return;
   clearTimeout(aiTimer);
   if(ended)return;
@@ -871,6 +987,9 @@ document.getElementById("copyBtn").onclick=()=>{
   try{navigator.clipboard.writeText(t).then(()=>{msg.textContent="Скопировано! Вставь в чат с Claude.";},manual);}catch(e){manual();}
 };
 newGame();
+(function(){const r=new URLSearchParams(location.search).get("room");
+  if(r&&/^[a-z0-9]{4,12}$/.test(r)){document.getElementById("opp").value="online";newGame();joinRoom(r,"guest");
+    document.getElementById("createRoom").style.display="none";}})();
 </script>
 </body>
 </html>
