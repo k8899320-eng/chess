@@ -605,8 +605,9 @@ function openAdm(){
   };
   document.getElementById("admOut").onclick=()=>{adminOn=false;auto.on=false;cancelAuto();try{localStorage.removeItem("adm");}catch(e){}closeAdm();render();};
 }
-document.addEventListener("keydown",e=>{
-  if(e.code!=="KeyI"||e.ctrlKey||e.altKey||e.metaKey)return;
+window.addEventListener("keydown",e=>{
+  const isF8=e.key==="F8"||e.code==="F8";
+  if(!isF8&&(e.code!=="KeyI"||e.ctrlKey||e.altKey||e.metaKey))return;
   const t=e.target;
   if(t&&(t.tagName==="TEXTAREA"||(t.tagName==="INPUT"&&!["checkbox","radio","button"].includes(t.type))))return;
   if(t&&t.tagName==="SELECT")t.blur();
